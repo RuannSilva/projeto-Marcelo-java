@@ -69,7 +69,7 @@ Ou seja, o desenho é:
 
 - **MODEL** — tem dois tipos de classe, as duas no mesmo pacote:
   - **Entidades** (`Produto`, `Usuario`, `Administrador`): carregam os dados
-    e regras próprias do objeto (ex: `podeGerenciarEstoque()`).
+    e regras próprias do objeto (ex: `podeGerenciar()`).
   - **DAO** (`ProdutoDAO`, `UsuarioDAO`): sabem guardar/buscar essas
     entidades — hoje numa lista em memória, depois via SQL no MySQL. São
     elas que "falam com o BD".
@@ -98,7 +98,7 @@ sobre `control`.
 | `categoria` | `String` | ex: "Grãos", "Laticínios", "Bebidas" |
 | `quantidade` | `int` | unidades em estoque |
 | `precoUnitario` | `double` | preço de venda por unidade |
-| `dataDeValidade` | `LocalDate` | `java.time.LocalDate` |
+| `dataValidade` | `LocalDate` | `java.time.LocalDate` |
 
 Métodos próprios do objeto:
 - `boolean estaProximoDoVencimento()`
@@ -117,8 +117,13 @@ por isso que herança faz sentido aqui:
 
 | Classe | Método | Retorno |
 |---|---|---|
-| `Usuario` | `podeGerenciarEstoque()` | `false` |
-| `Administrador` (`@Override`) | `podeGerenciarEstoque()` | `true` |
+| `Usuario` | `podeGerenciar()` | `false` |
+| `Administrador` (`@Override`) | `podeGerenciar()` | `true` |
+
+> **Decisão atual do projeto**: por enquanto não existe construtor para criar
+> `Usuario`/`Administrador` com dados variados — usamos um usuário padrão e
+> um administrador padrão fixos, só para testar o fluxo de permissão. O
+> construtor "de verdade" (para cadastrar novos usuários) fica para depois.
 
 ### 3.2 DAO
 
@@ -161,14 +166,14 @@ seguir, e chama o DAO certo (que está no `model`).
 | `listarTodos()` | qualquer `Usuario` | chama `produtoDAO.listarTodos()` |
 | `buscarPorNome(String nome)` | qualquer `Usuario` | chama `produtoDAO.buscarPorNome(nome)` |
 | `filtrarPorCategoria(String categoria)` | qualquer `Usuario` | chama `produtoDAO.buscarPorCategoria(categoria)` |
-| `adicionar(Usuario usuarioLogado, Produto produto)` | só se `usuarioLogado.podeGerenciarEstoque()` | valida e chama `produtoDAO.adicionar(produto)` |
+| `adicionar(Usuario usuarioLogado, Produto produto)` | só se `usuarioLogado.podeGerenciar()` | valida e chama `produtoDAO.adicionar(produto)` |
 | `remover(Usuario usuarioLogado, int id)` | idem | valida e chama `produtoDAO.remover(id)` |
 | `editar(Usuario usuarioLogado, Produto produto)` | idem | valida e chama `produtoDAO.atualizar(produto)` |
 
 Padrão dentro de `adicionar`/`remover`/`editar`:
 
 ```java
-if (!usuarioLogado.podeGerenciarEstoque()) {
+if (!usuarioLogado.podeGerenciar()) {
     throw new SecurityException("Usuário sem permissão para essa ação.");
 }
 // validações de negócio (nome não vazio, quantidade >= 0, etc.)
@@ -189,7 +194,7 @@ produtoDAO.adicionar(produto); // ou remover / atualizar
 |---|---|---|
 | `TelaLogin` | `JTextField`, `JPasswordField`, `JButton` | chama `LoginController.autenticar(...)` |
 | `TelaInicial` | `JButton`s de navegação | leva pra `TelaListagemProdutos` |
-| `TelaListagemProdutos` | `JTable`, `JTextField` (busca), `JComboBox` (filtro), botões Adicionar/Remover/Editar | chama `ProdutoController`; botões de alterar só habilitam se `usuarioLogado.podeGerenciarEstoque()` for `true` |
+| `TelaListagemProdutos` | `JTable`, `JTextField` (busca), `JComboBox` (filtro), botões Adicionar/Remover/Editar | chama `ProdutoController`; botões de alterar só habilitam se `usuarioLogado.podeGerenciar()` for `true` |
 
 **Navegação**: `JFrame` principal com `CardLayout` trocando os painéis
 (login → inicial → listagem).
@@ -215,7 +220,7 @@ produtoDAO.adicionar(produto); // ou remover / atualizar
 ## 7. Ordem sugerida de implementação
 
 1. `Produto` (model, entidade) — atributos, getters/setters, os 2 métodos.
-2. `Usuario` e `Administrador` (model, entidade) — atributos e `podeGerenciarEstoque()`.
+2. `Usuario` e `Administrador` (model, entidade) — atributos e `podeGerenciar()`.
 3. `ProdutoDAO` (model, DAO) — comece com `ArrayList` interna.
 4. `UsuarioDAO` (model, DAO) — idem.
 5. `ProdutoController` e `LoginController` (control) — por cima dos DAOs;
@@ -233,7 +238,7 @@ produtoDAO.adicionar(produto); // ou remover / atualizar
 
 - [ ] `Produto` (entidade)
 - [ ] `Usuario` (entidade)
-- [ ] `Administrador` (extends `Usuario`, sobrescreve `podeGerenciarEstoque()`)
+- [ ] `Administrador` (extends `Usuario`, sobrescreve `podeGerenciar()`)
 - [ ] `ProdutoDAO` (com `ArrayList` interna)
 - [ ] `UsuarioDAO` (com `ArrayList` interna)
 - [ ] `ProdutoController`
