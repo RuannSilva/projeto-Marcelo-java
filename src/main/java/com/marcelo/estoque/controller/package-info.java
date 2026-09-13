@@ -1,5 +1,8 @@
 /**
- * Controllers: fazem a ponte entre as telas (view) e o acesso a dados (dao).
- * Recebem as ações da tela, aplicam validações/regras e chamam o DAO.
+ * Controllers: recebem as ações vindas da view, aplicam validações e regras
+ * de permissão, e também guardam/recuperam os dados (hoje em memória, ex:
+ * ArrayList; futuramente via JDBC/MySQL). Nesta arquitetura de 3 camadas
+ * (model/view/controller) não existe um pacote DAO separado — o acesso aos
+ * dados é responsabilidade do próprio controller.
  */
 package com.marcelo.estoque.controller;

@@ -5,6 +5,11 @@ quais classes e atributos vamos criar, e em que ordem construir tudo. A ideia é
 que você use isso como um mapa enquanto escreve o código — não é o código em
 si, é a planta da casa antes de erguer as paredes.
 
+> **Arquitetura**: o projeto exige MVC estrito — apenas três pacotes:
+> `model`, `view` e `controller`. Não existe um pacote `dao` separado; o
+> acesso aos dados (hoje em memória, depois MySQL) é responsabilidade do
+> próprio `controller`.
+
 ---
 
 ## 1. Visão geral
@@ -12,6 +17,7 @@ si, é a planta da casa antes de erguer as paredes.
 Um sistema desktop (Java + Swing) para controlar o estoque de uma empresa de
 alimentos. O usuário faz login, cai numa tela inicial, e a partir dali acessa
 a listagem de produtos, onde pode buscar, filtrar, adicionar e remover itens.
+Usuários comuns só consultam; administradores também podem alterar o estoque.
 
 **Requisitos funcionais** (o que o sistema precisa fazer):
 
@@ -22,41 +28,47 @@ a listagem de produtos, onde pode buscar, filtrar, adicionar e remover itens.
 | RF03 | Listar todos os produtos do estoque |
 | RF04 | Buscar produto por nome |
 | RF05 | Filtrar produtos (por categoria, por estoque baixo, etc.) |
-| RF06 | Adicionar um novo produto ao estoque |
-| RF07 | Remover um produto do estoque |
+| RF06 | Adicionar um novo produto ao estoque (somente administrador) |
+| RF07 | Remover um produto do estoque (somente administrador) |
+| RF08 | Editar informações de um produto (somente administrador) |
 
-Por enquanto os dados ficam em memória (uma lista); depois trocamos por MySQL
-sem precisar mexer nas telas — é justamente a vantagem de organizar em
-camadas, como você vai ver abaixo.
+Por enquanto os dados ficam em memória (uma lista dentro do controller);
+depois trocamos por MySQL sem precisar mexer nas telas nem no model.
 
 ---
 
 ## 2. Arquitetura: como as camadas se falam
 
-Um sistema "amador" costuma ter tudo misturado: a tela lê o clique do botão,
-já monta o SQL, já mexe direto na lista. Funciona no começo, mas vira um nó
-conforme o projeto cresce. Por isso usamos camadas, cada uma com **uma única
-responsabilidade**:
-
 ```
-┌─────────────┐      ┌──────────────┐      ┌───────────┐      ┌───────────┐
-│    VIEW     │ ───► │  CONTROLLER  │ ───► │    DAO    │ ───► │   MODEL   │
-│  (telas)    │ ◄─── │  (regras)    │ ◄─── │ (acesso)  │      │ (dados)   │
-└─────────────┘      └──────────────┘      └───────────┘      └───────────┘
+┌─────────────┐              ┌──────────────────────────┐
+│    VIEW     │ ───────────► │        CONTROLLER         │
+│  (telas)    │ ◄─────────── │  regras + acesso a dados  │
+└─────────────┘              └────────────┬──────────────┘
+                                           │ usa
+                                           ▼
+                                   ┌───────────────┐
+                                   │     MODEL      │
+                                   │ (Produto,      │
+                                   │  Usuario,      │
+                                   │  Administrador)│
+                                   └───────────────┘
 ```
 
-- **MODEL** — as "fichas" de dados. Uma classe `Produto` é só um objeto que
-  carrega nome, quantidade etc. Não sabe nada sobre tela nem sobre banco.
-- **DAO** (Data Access Object) — quem guarda e recupera os models. Hoje é uma
-  lista em memória; amanhã pode ser uma tabela MySQL. Quem usa o DAO não
-  precisa saber qual dos dois é.
-- **CONTROLLER** — a ponte. Recebe um pedido da tela ("adiciona esse
-  produto"), valida ("quantidade não pode ser negativa"), e manda pro DAO.
+- **MODEL** — as "fichas" de dados. `Produto` carrega nome, quantidade etc.
+  `Usuario`/`Administrador` carregam dados de login **e** sabem responder
+  sobre suas próprias permissões (ver seção 4). O model não sabe nada sobre
+  tela nem sobre onde os dados ficam guardados.
+- **CONTROLLER** — faz tudo que não é "mostrar na tela" nem "ser um dado":
+  guarda a lista de produtos (hoje em memória, depois no banco), valida
+  regras de negócio ("quantidade não pode ser negativa"), confere permissão
+  do usuário antes de alterar algo, e devolve o resultado pra view.
 - **VIEW** — as janelas Swing. Só mostra dados e captura cliques; nunca
-  decide regra de negócio nem mexe direto na lista de dados.
+  decide regra de negócio nem guarda dado nenhum por conta própria.
 
-**Regra de ouro:** a seta só passa pela camada vizinha. A `View` nunca fala
-direto com o `DAO`; sempre passa pelo `Controller`.
+**Regra de ouro:** a `view` só fala com o `controller`. O `controller` é o
+único que enxerga o `model` E os dados guardados. Isso ainda te dá a mesma
+vantagem de antes — trocar "lista em memória" por "MySQL" no futuro é mudar
+só o código de dentro do controller, sem tocar na view.
 
 ---
 
@@ -71,130 +83,138 @@ direto com o `DAO`; sempre passa pelo `Controller`.
 | `categoria` | `String` | ex: "Grãos", "Laticínios", "Bebidas" |
 | `quantidade` | `int` | unidades em estoque |
 | `precoUnitario` | `double` | preço de venda por unidade |
-| `dataDeValidade` | `LocalDate` | usar `java.time.LocalDate`, não a `Data` que você fez antes — é a classe pronta do Java pra datas |
+| `dataDeValidade` | `LocalDate` | usar `java.time.LocalDate` (classe pronta do Java pra datas) |
 
-Métodos que fazem sentido dentro do próprio `Produto` (não são "regra de
-negócio de sistema", são coisas que o próprio objeto sabe responder sobre si):
+Métodos que fazem sentido dentro do próprio `Produto` (coisas que o objeto
+sabe responder sobre si mesmo, sem depender de mais nada):
 
 - `boolean estaProximoDoVencimento()` — compara `dataDeValidade` com hoje.
 - `boolean estoqueBaixo(int limite)` — compara `quantidade` com um limite.
 
-### 3.2 `Usuario`
+### 3.2 `Usuario` e `Administrador`
 
-| Atributo | Tipo | Observação |
+| Atributo (em `Usuario`) | Tipo | Observação |
 |---|---|---|
 | `id` | `int` | identificador único |
 | `login` | `String` | nome de usuário |
-| `senha` | `String` | **nunca** guardar em texto puro num sistema real (ver seção 7); no protótipo em memória pode ser texto simples pra simplificar |
+| `senha` | `String` | em texto simples por enquanto (ver seção 7) |
+
+`Administrador extends Usuario` — não acrescenta atributo novo neste caso,
+só muda **comportamento** (por isso herança faz sentido aqui: é a mesma
+"ficha" de dados, só que com permissões diferentes).
+
+O ponto chave: quem decide "o que esse usuário pode fazer" é o próprio
+objeto, via um método que se comporta diferente por polimorfismo:
+
+| Classe | Método | Retorno |
+|---|---|---|
+| `Usuario` | `podeGerenciarEstoque()` | `false` |
+| `Administrador` (com `@Override`) | `podeGerenciarEstoque()` | `true` |
+
+Assim, em vez de espalhar `if (usuario instanceof Administrador)` pelo
+sistema, o controller sempre pergunta a mesma coisa
+(`usuarioLogado.podeGerenciarEstoque()`), e cada classe responde do seu
+jeito — isso é polimorfismo na prática, não só na teoria.
 
 ---
 
-## 4. Camada DAO — acesso aos dados
+## 4. Camada Controller — regras + acesso aos dados
 
-Para cada model, um DAO. A ideia é definir um **contrato** (interface) e
-depois uma implementação. Isso é o que permite trocar "memória" por "MySQL"
-sem dor:
+Cada controller guarda internamente os dados que ele gerencia (por enquanto,
+uma `List` em memória) e expõe métodos para a view usar. Ele nunca aceita
+que a view mexa nessa lista diretamente.
 
+### 4.1 `ProdutoController`
+
+| Método | Quem pode chamar | O que faz |
+|---|---|---|
+| `listarTodos()` | qualquer `Usuario` | devolve todos os produtos guardados |
+| `buscarPorNome(String nome)` | qualquer `Usuario` | filtra a lista pelo nome |
+| `filtrarPorCategoria(String categoria)` | qualquer `Usuario` | filtra a lista pela categoria |
+| `adicionar(Usuario usuarioLogado, Produto produto)` | só se `usuarioLogado.podeGerenciarEstoque()` | valida e adiciona à lista |
+| `remover(Usuario usuarioLogado, int id)` | idem | valida e remove da lista |
+| `editar(Usuario usuarioLogado, Produto produtoAtualizado)` | idem | valida e substitui os dados do produto |
+
+Dentro de `adicionar`/`remover`/`editar`, o padrão é sempre:
+
+```java
+if (!usuarioLogado.podeGerenciarEstoque()) {
+    throw new SecurityException("Usuário sem permissão para essa ação.");
+}
+// validações de negócio (nome não vazio, quantidade >= 0, etc.)
+// aqui mexe na lista interna do controller
 ```
-ProdutoDAO (interface)
-   ├── adicionar(Produto p)
-   ├── remover(int id)
-   ├── listarTodos() : List<Produto>
-   ├── buscarPorNome(String nome) : List<Produto>
-   └── buscarPorCategoria(String categoria) : List<Produto>
 
-ProdutoDAOMemoria (implementação com ArrayList)   ← começamos por aqui
-ProdutoDAOMySQL   (implementação com JDBC)         ← depois
-```
+### 4.2 `LoginController`
 
-Mesma ideia para `UsuarioDAO` (com `autenticar(login, senha) : boolean` ou
-`buscarPorLogin(String login) : Usuario`).
-
-> **Por que uma interface?** Porque o `Controller` vai depender da
-> **interface** `ProdutoDAO`, não da classe concreta. No dia que você trocar
-> a implementação de memória pela de MySQL, muda uma linha (qual classe é
-> instanciada), e o resto do sistema nem percebe.
-
----
-
-## 5. Camada Controller — as regras
-
-| Classe | Responsabilidade |
+| Método | O que faz |
 |---|---|
-| `LoginController` | recebe login/senha da tela, chama `UsuarioDAO`, devolve sucesso/erro |
-| `ProdutoController` | recebe pedidos de adicionar/remover/buscar/filtrar da tela, valida, chama `ProdutoDAO` |
-
-Exemplos de regra que **é** do controller (e não da view nem do DAO):
-- "quantidade não pode ser negativa"
-- "nome do produto não pode ser vazio"
-- "não permitir dois produtos com o mesmo nome" (se essa for uma regra sua)
+| `autenticar(String login, String senha)` | procura o usuário na lista interna e confere a senha; devolve o `Usuario` (ou `Administrador`) autenticado, ou indica falha |
 
 ---
 
-## 6. Camada View — as telas (Swing)
+## 5. Camada View — as telas (Swing)
 
 | Tela | Componentes principais | O que faz |
 |---|---|---|
 | `TelaLogin` | `JTextField` (login), `JPasswordField` (senha), `JButton` (entrar) | chama `LoginController.autenticar(...)` |
 | `TelaInicial` | `JButton`s de navegação (ex: "Ver Estoque") | leva pra `TelaListagemProdutos` |
-| `TelaListagemProdutos` | `JTable` (lista), `JTextField` (busca), `JComboBox` (filtro por categoria), botões "Adicionar" e "Remover" | chama `ProdutoController` |
+| `TelaListagemProdutos` | `JTable` (lista), `JTextField` (busca), `JComboBox` (filtro por categoria), botões "Adicionar"/"Remover"/"Editar" | chama `ProdutoController`; botões de alterar só aparecem/habilitam se `usuarioLogado.podeGerenciarEstoque()` for `true` |
 
 **Navegação entre telas**: a forma mais simples em Swing é um `JFrame`
 principal com `CardLayout`, que troca o painel visível (login → inicial →
-listagem) sem abrir várias janelas soltas. Vale estudar isso quando chegar
-nessa parte.
+listagem) sem abrir várias janelas soltas.
 
 **`JTable` e busca/filtro**: o `JTable` não filtra sozinho — ele lê os dados
-de um `TableModel`. A busca/filtro na prática significa: pegar a lista
-filtrada que o `Controller` devolveu e atualizar o `TableModel` da tabela.
+de um `TableModel`. A busca/filtro na prática significa: pegar a lista que o
+`ProdutoController` devolveu já filtrada, e atualizar o `TableModel` da
+tabela com ela.
 
 ---
 
-## 7. Coisas que um sistema "profissional" também levaria em conta
+## 6. Coisas que um sistema "profissional" também levaria em conta
 
 Você não precisa implementar tudo isso agora — é só pra você saber que
 existe e não estranhar depois:
 
 - **Senha nunca em texto puro**: um sistema de verdade usa hash (ex:
   BCrypt). No estágio de aprendizado, guardar como texto simples é aceitável
-  pra focar na lógica, mas é bom já saber que isso mudaria num sistema real.
-- **Tratamento de exceções**: quando o DAO virar MySQL de verdade, toda
-  operação pode falhar (conexão caiu, etc.) — isso se trata com `try/catch` e
-  mensagens de erro na tela, não deixando o programa travar.
-- **Separação de configuração**: usuário/senha do banco não ficam escritos
+  pra focar na lógica.
+- **Tratamento de exceções**: quando os dados virarem MySQL de verdade, toda
+  operação pode falhar (conexão caiu, etc.) — isso se trata com `try/catch`.
+- **Configuração separada**: usuário/senha do banco não ficam escritos
   direto no código-fonte; ficam num arquivo de configuração (ex:
   `application.properties` em `src/main/resources`).
 
 ---
 
-## 8. Ordem sugerida de implementação
+## 7. Ordem sugerida de implementação
 
-1. `Produto` (model) — só atributos, getters/setters, os dois métodos da
-   seção 3.1.
-2. `ProdutoDAO` (interface) + `ProdutoDAOMemoria` (implementação com
-   `ArrayList`) — teste tudo isso com um `main()` simples, sem tela ainda.
-3. `ProdutoController` — por cima do DAO, com as validações da seção 5.
-4. `TelaListagemProdutos` — a tela mais trabalhosa, mas validando o CRUD
-   inteiro visualmente.
-5. `Usuario`, `UsuarioDAO`, `LoginController`, `TelaLogin`.
-6. `TelaInicial` + `CardLayout` ligando as três telas.
+1. `Produto` (model) — atributos, getters/setters, os dois métodos da 3.1.
+2. `Usuario` e `Administrador` (model) — atributos e `podeGerenciarEstoque()`.
+3. `ProdutoController` — comece guardando os produtos numa `ArrayList`
+   interna; teste com um `main()` simples, sem tela ainda.
+4. `LoginController` — mesma ideia, com uma lista de usuários de teste.
+5. `TelaListagemProdutos` — a tela mais trabalhosa, validando o CRUD inteiro
+   visualmente (usando um usuário comum e um administrador pra comparar).
+6. `TelaLogin` + `TelaInicial` + navegação (`CardLayout`).
 7. Refinar busca e filtros na listagem.
-8. (Fase 2) Trocar `ProdutoDAOMemoria`/`UsuarioDAOMemoria` pela versão MySQL.
+8. (Fase 2) Trocar a lista em memória dentro dos controllers por acesso
+   real ao MySQL (JDBC), sem mudar a assinatura dos métodos.
 
 ---
 
-## 9. Checklist de progresso
+## 8. Checklist de progresso
 
 - [ ] `Produto`
-- [ ] `ProdutoDAO` (interface)
-- [ ] `ProdutoDAOMemoria`
-- [ ] `ProdutoController`
-- [ ] `TelaListagemProdutos`
 - [ ] `Usuario`
-- [ ] `UsuarioDAO` (interface) + implementação em memória
-- [ ] `LoginController`
+- [ ] `Administrador` (extends `Usuario`, sobrescreve `podeGerenciarEstoque()`)
+- [ ] `ProdutoController` (com lista em memória)
+- [ ] `LoginController` (com lista em memória)
+- [ ] `TelaListagemProdutos`
 - [ ] `TelaLogin`
 - [ ] `TelaInicial` + navegação (`CardLayout`)
 - [ ] Busca por nome funcionando
 - [ ] Filtro por categoria funcionando
-- [ ] (Fase 2) `ConexaoBD` + DAOs com MySQL
+- [ ] Botões de adicionar/remover/editar habilitados só para administrador
+- [ ] (Fase 2) Controllers acessando MySQL via JDBC
